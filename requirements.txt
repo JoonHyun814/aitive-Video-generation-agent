@@ -1,0 +1,8 @@
+pydantic>=2.6
+
+# scenario_agent_claude_litellm only (scenario_agent_claude just needs the Claude Code CLI on PATH)
+litellm>=1.100
+python-dotenv>=1.0
+requests>=2.31
+beautifulsoup4>=4.12
+mcp>=2.0
