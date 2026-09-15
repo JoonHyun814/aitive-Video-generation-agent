@@ -13,10 +13,12 @@ MCP 클라이언트 내장)라서 Python은 오케스트레이션만 하면 됐�
 
 ```
 scenario_agent_claude_litellm/
-  config.py        .env에서 LITELLM_BASE_URL/MODEL/API_KEY 로드
+  config.py        .env에서 LITELLM_BASE_URL/MODEL/API_KEY 로드, usage_dict()로 캐시 필드 정규화
   tools.py          web_fetch(HTML→텍스트, 이미지→비전 분석) / web_search(DuckDuckGo) / rag_* 5종
   mcp_client.py      RAG MCP 서버(Streamable HTTP)에 매 호출마다 새 세션으로 접속하는 동기 래퍼
   agent_loop.py       수동 tool-calling 루프 + 최종 response_format=json_schema 호출 + repair
+                      + 모든 모델/도구 호출을 trace 리스트로 기록
+  trace_render.py      trace를 사람이 읽는 HTML 실행 로그로 렌더링
   prompts.py           scenario_agent_claude/prompts.py와 동일한 내용(도구 이름만 이 구현에 맞게 수정)
   cli.py                scenario_agent_claude.schema/validators/render를 그대로 import해서 사용
 ```
@@ -80,10 +82,18 @@ python -m scenario_agent_claude_litellm.cli \
 
 ## 출력
 
-`scenario_agent_claude`와 동일한 파일 + `transcript.json`(전체 대화 기록 — 디버깅용,
-`raw_cli_output.json`에 대응):
+`scenario_agent_claude`와 동일한 파일 + 두 가지 추가:
 
-- `scenario.json`, `scenario.md`, `scenario.html`, `validation_report.md`, `transcript.json`
+- `scenario.json`, `scenario.md`, `scenario.html`, `validation_report.md` — 동일
+- `transcript.json` — LiteLLM에 실제로 보낸/받은 원본 메시지 전체(디버깅용, `raw_cli_output.json`에 대응)
+- `trace.json` / **`trace.html`** — 실행 전 과정을 단계별로 기록한 로그. 각 모델 호출의
+  입력/출력 토큰과 프롬프트 캐시 히트(`cached_tokens`)/캐시 생성(`cache_write_tokens`),
+  각 도구 호출의 이름·인자·결과 미리보기, `web_fetch`가 이미지 분석을 위해 내부적으로 만든
+  비전 호출(`web_fetch:vision`)까지 전부 기록된다. `trace.html`을 열면 리서치 → 최종 출력 →
+  (필요시) repair 순서로 사람이 읽기 좋은 타임라인으로 볼 수 있다.
+
+`validation_report.md`의 "누적 비용"/토큰 수치는 `trace.json`의 모든 모델 호출을 합산한
+값이다 — repair가 여러 번 일어나도 마지막 시도 하나만이 아니라 전체 실행 비용을 반영한다.
 
 ## 비용 추정에 대한 중요한 제약
 

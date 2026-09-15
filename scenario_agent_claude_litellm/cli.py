@@ -25,6 +25,7 @@ from scenario_agent_claude.validators import ValidationResult, validate_scenario
 
 from . import agent_loop, config
 from .prompts import build_system_prompt, build_task_prompt
+from .trace_render import render_trace_html
 
 PROJECT_DIR = str(Path(__file__).resolve().parent.parent)
 
@@ -34,19 +35,45 @@ def _slug(text: str) -> str:
     return s or "product"
 
 
+def _trace_totals(full_trace: list) -> dict:
+    """Sum across every model call in the trace -- `result.total_cost_usd` only
+    reflects the last (repair) call, not the whole run, since `result` is
+    reassigned each repair round."""
+    prompt_tokens = sum((s.get("usage") or {}).get("prompt_tokens") or 0 for s in full_trace)
+    completion_tokens = sum((s.get("usage") or {}).get("completion_tokens") or 0 for s in full_trace)
+    cached_tokens = sum((s.get("usage") or {}).get("cached_tokens") or 0 for s in full_trace)
+    costs = [s.get("cost_usd") for s in full_trace if s.get("type") == "model_call"]
+    cost_known = costs and all(c is not None for c in costs)
+    total_cost = sum(c for c in costs if c is not None) if cost_known else None
+    tool_calls = sum(1 for s in full_trace if s.get("type") == "tool_call")
+    return {
+        "prompt_tokens": prompt_tokens,
+        "completion_tokens": completion_tokens,
+        "cached_tokens": cached_tokens,
+        "total_cost_usd": total_cost,
+        "tool_calls": tool_calls,
+    }
+
+
 def _format_report(
     validation: ValidationResult,
-    result: agent_loop.RunResult,
+    totals: dict,
     repair_attempts_used: int,
 ) -> str:
     lines = ["# 검증 리포트 (LiteLLM 버전)\n"]
     lines.append(f"- model: {config.default_model()} (via {config.base_url()})")
-    cost = f"${result.total_cost_usd:.4f} (추정치 — 실제 청구액과 다를 수 있음)" if result.total_cost_usd is not None else "알 수 없음(게이트웨이 모델 단가 미상)"
-    lines.append(f"- 누적 비용: {cost}")
-    lines.append(f"- 토큰: prompt={result.prompt_tokens}, completion={result.completion_tokens}")
-    lines.append(f"- 도구 호출 횟수: {result.tool_calls_made}")
+    cost = (
+        f"${totals['total_cost_usd']:.4f} (추정치 — 실제 청구액과 다를 수 있음)"
+        if totals["total_cost_usd"] is not None
+        else "알 수 없음(게이트웨이 모델 단가 미상)"
+    )
+    lines.append(f"- 누적 비용(전체 호출 합산): {cost}")
+    lines.append(f"- 토큰: prompt={totals['prompt_tokens']}, completion={totals['completion_tokens']}, "
+                 f"캐시 히트={totals['cached_tokens']}")
+    lines.append(f"- 도구 호출 횟수: {totals['tool_calls']}")
     lines.append(f"- repair 시도 횟수: {repair_attempts_used}")
-    lines.append(f"- 최종 상태: {'PASS' if validation.ok else 'FAIL (수동 검토 필요)'}\n")
+    lines.append(f"- 최종 상태: {'PASS' if validation.ok else 'FAIL (수동 검토 필요)'}")
+    lines.append("- 단계별 상세 기록: trace.html\n")
 
     lines.append(f"## 오류 ({len(validation.errors)})")
     lines += [f"- {e}" for e in validation.errors] or ["- (없음)"]
@@ -86,6 +113,7 @@ def main(argv: list[str] | None = None) -> int:
         model=args.model,
         max_budget_usd=args.max_budget_usd,
     )
+    full_trace: list = list(result.trace)
     if not result.ok:
         print(f"실패: {result.error_message}", file=sys.stderr)
         return 1
@@ -99,13 +127,17 @@ def main(argv: list[str] | None = None) -> int:
     ):
         repair_attempts_used += 1
         print(f"[repair {repair_attempts_used}/{args.repair_attempts}] 검증 실패, 수정 요청 중...")
+        previous_output = result.structured_output
         result = agent_loop.run_repair(
             messages=result.messages,
             errors=validation.errors,
             schema=schema,
+            previous_output=previous_output,
             model=args.model,
             max_budget_usd=args.max_budget_usd / 2,
+            attempt=repair_attempts_used,
         )
+        full_trace.extend(result.trace)
         if not result.ok:
             print(f"repair 호출 실패: {result.error_message}", file=sys.stderr)
             break
@@ -114,16 +146,23 @@ def main(argv: list[str] | None = None) -> int:
     out_dir = Path(args.output_dir) / f"{_slug(args.product_name)}_{datetime.datetime.now():%Y%m%d_%H%M%S}"
     out_dir.mkdir(parents=True, exist_ok=True)
 
+    totals = _trace_totals(full_trace)
+
     (out_dir / "scenario.json").write_text(
         json.dumps(result.structured_output, ensure_ascii=False, indent=2), encoding="utf-8"
     )
     (out_dir / "transcript.json").write_text(
         json.dumps(result.messages, ensure_ascii=False, indent=2, default=str), encoding="utf-8"
     )
+    (out_dir / "trace.json").write_text(
+        json.dumps(full_trace, ensure_ascii=False, indent=2, default=str), encoding="utf-8"
+    )
+    trace_meta = {"product_name": args.product_name, **totals}
+    (out_dir / "trace.html").write_text(render_trace_html(full_trace, trace_meta), encoding="utf-8")
     if scenario is not None:
         (out_dir / "scenario.md").write_text(render_markdown(scenario), encoding="utf-8")
         (out_dir / "scenario.html").write_text(render_html(scenario), encoding="utf-8")
-    report = _format_report(validation, result, repair_attempts_used)
+    report = _format_report(validation, totals, repair_attempts_used)
     (out_dir / "validation_report.md").write_text(report, encoding="utf-8")
 
     print(f"\n[2/3] 출력 위치: {out_dir}")

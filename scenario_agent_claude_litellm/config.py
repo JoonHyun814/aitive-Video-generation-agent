@@ -63,3 +63,22 @@ def estimate_cost_usd(model: str, prompt_tokens: int, completion_tokens: int) ->
         return None
     in_price, out_price = pricing
     return (prompt_tokens / 1_000_000) * in_price + (completion_tokens / 1_000_000) * out_price
+
+
+def usage_dict(usage) -> dict:
+    """Normalize a litellm response.usage object into a plain dict, including
+    prompt-cache fields when the gateway populates them (field names vary
+    slightly by provider translation, so this checks a few known spellings)."""
+    details = getattr(usage, "prompt_tokens_details", None)
+    cached = getattr(details, "cached_tokens", None) if details else None
+    cache_write = None
+    if details:
+        cache_write = getattr(details, "cache_creation_tokens", None) or getattr(
+            details, "cache_write_tokens", None
+        )
+    return {
+        "prompt_tokens": getattr(usage, "prompt_tokens", None),
+        "completion_tokens": getattr(usage, "completion_tokens", None),
+        "cached_tokens": cached,
+        "cache_write_tokens": cache_write,
+    }

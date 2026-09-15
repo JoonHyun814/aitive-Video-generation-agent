@@ -8,6 +8,8 @@ manual tool-calling loop rather than relying on the Claude Code harness.
 
 from __future__ import annotations
 
+import json
+
 AD_THEORY_BRIEFING = """\
 ## 광고 효과 이론 요약 (docs/ad/*.md 기반 — 시나리오 설계에 반드시 적용)
 
@@ -40,6 +42,46 @@ AD_THEORY_BRIEFING = """\
 - Ability(능력): 전문 용어 없이 직관적으로 이해되는가?
 자막/대사 분량을 씬의 길이에 맞게 통제할 것 (한국어 자막 기준 초당 약 4~5자, 대사(발화) 기준
 초당 약 5~6음절을 넘기지 않도록 — 넘기면 Opportunity가 깨진다).
+"""
+
+STRATEGIC_REPOSITIONING_RULES = """\
+## 전략적 리포지셔닝 (Strategic Repositioning) — 이종 카테고리 광고 형식 차용
+
+같은 카테고리의 광고 문법만 참고하면 시청자의 예상을 벗어나지 못해 주의(Attention)를 끌기
+어렵다. 완전히 다른 산업의 광고 연출 문법을 의도적으로 빌려와 이 제품에 입히는 것은 유효한
+크리에이티브 전략이며, 특히 저관여/실용재처럼 카테고리 내 광고가 서로 비슷해 보이는 제품일수록
+효과가 크다. 다음 절차를 따를 것:
+
+1. 이 제품/타겟에 어떤 이종 카테고리의 화법이 어울릴지 판단하라. 예시(고정된 목록이 아니다 —
+   제품 특성에 맞다면 다른 카테고리를 골라도 된다):
+   - **모바일 게임/영화 트레일러식** (시청각적 즉각성): 웅장한 BGM, 화려한 화면 전환, 비유적
+     카피. 장점: 초반 훅과 동기부여(Motivation)를 극대화한다. 단점: 영상미 자체만 기억에
+     남고 핵심 메시지(예: 구체적 혜택)가 묻히는 '뱀파이어 효과'로 설득력(Persuasion)이 떨어질
+     위험이 있다.
+   - **명품 패션/향수식** (감성적 국면 이동): 스펙 설명을 배제하고 무드·자아 이미지 투영에
+     집중. 장점: 영상 자체의 매력(A_ad)이 브랜드 호감(A_b)으로 전이된다. 단점: 기능적 지식
+     (Knowledge) 전달이 없어 확신(Conviction) 단계로 넘어갈 근거가 부족해질 수 있다.
+   - **자동차/IT 프리젠테이션식** (정보적 국면 이동): 긴 카피, 세밀한 스펙 설명, 인포머셜
+     구조. 단점: 짧은 러닝타임 안에 정보 과부하가 걸려 MOA의 Opportunity(정보 처리 기회)가
+     박탈될 수 있다.
+2. 어떤 카테고리를 고르든, 후반부(클로징 직전)에는 이 제품의 '문제-해결 구도(Slice-of-Life,
+   Stewart & Furse)'를 직관적으로 보여주는 컷을 최소 1개 배치해 크리에이티브가 설득력을
+   잡아먹지 않도록 균형을 잡아라.
+3. **빌려올 카테고리를 정했으면, 그 카테고리의 실제 광고 연출을 반드시 조사한 뒤 반영하라 —
+   추측으로 스타일을 지어내지 마라.** 조사는 RAG 도구와 `web_search`를 **함께** 사용한다:
+   - RAG: `rag_search_chromadb`/`rag_search_chromadb_hybrid`로 그 이종 카테고리 관련 쿼리를
+     날려 레퍼런스를 찾고(예: `category_analysis`/`ad_production_reference`에 "게임 트레일러
+     연출", "향수 광고 무드" 등으로 검색), `rag_search_graph_pattern`으로 관련 서사 역할의
+     크리에이티브 요소 통계도 참고하라.
+   - `web_search`: RAG 데이터베이스에 없을 수 있는 실제 최신 사례(그 카테고리의 화제/수상작
+     광고, 최근 트렌드)를 웹에서 찾아 구체적인 연출 아이디어(전환 기법, 카피 톤, BGM 스타일,
+     편집 리듬 등)를 보강하라. RAG만으로는 이종 카테고리 레퍼런스가 부족할 수 있으므로
+     web_search를 생략하지 말 것.
+   두 도구 중 하나만 쓰지 말고 반드시 함께 사용해 교차 검증하라.
+4. `creative_strategy.rationale`에 어떤 카테고리를 빌려왔는지, 왜 그 선택이 이 제품/타겟에
+   적합한지, 위 장단점을 어떻게 균형 잡았는지 명시하라. 조사에 사용한 RAG 쿼리와 web_search
+   쿼리는 모두 `rag_queries_used`에 기록하라(예: `"web_search: 2026 인상적인 향수 광고 연출"`
+   처럼 `web_search:` 접두어를 붙여 RAG 쿼리와 구분할 것).
 """
 
 RAG_USAGE_RULES = """\
@@ -124,6 +166,8 @@ def build_system_prompt() -> str:
 
 {AD_THEORY_BRIEFING}
 
+{STRATEGIC_REPOSITIONING_RULES}
+
 {RAG_USAGE_RULES}
 
 {IMAGE_ANALYSIS_RULES}
@@ -157,11 +201,16 @@ def build_task_prompt(product_name: str, product_url: str, duration_s: float) ->
    직접 호출해 텍스트 판독과 외형(색상/형태) 분석을 수행하라. 필요하면 web_search로 보완하라.
 2. 이 제품이 FCB 그리드 상 어느 사분면에 속하는지, 이 광고가 효과 계층 모델의 어느 단계를
    목표로 해야 하는지 판단하라.
-3. RAG 도구로 유사 카테고리 광고의 컨셉/연출 레퍼런스와, 각 서사 역할(HOOK/PROBLEM/FEATURE/
-   DEMO/CTA 등)에서 실제로 자주 쓰이는 크리에이티브 요소를 조사하라(필요한 만큼만, 적응적으로).
-4. 등장인물/장소/소품을 설계하고, {duration_s:g}초를 씬 단위로 빈틈없이 분할하여 각 씬의
+3. 전략적 리포지셔닝 규칙에 따라 이 제품에 빌려올 이종 카테고리 광고 화법을 정하고, RAG 도구와
+   web_search를 함께 사용해 그 카테고리의 실제 연출 사례를 조사하라.
+4. RAG 도구로 유사(동일) 카테고리 광고의 컨셉/연출 레퍼런스와, 각 서사 역할(HOOK/PROBLEM/
+   FEATURE/DEMO/CTA 등)에서 실제로 자주 쓰이는 크리에이티브 요소를 조사하라(필요한 만큼만,
+   적응적으로).
+5. 등장인물/장소/소품을 설계하고, {duration_s:g}초를 씬 단위로 빈틈없이 분할하여 각 씬의
    장소/인물/소품/대사·행동/자막/음악·효과음/비주얼 이펙트/카메라 노트를 구체적으로 작성하라.
-5. 제출 전, 사실 기반 원칙과 씬 시간 합계가 정확히 {duration_s:g}초인지 스스로 재검토하라.
+   이종 카테고리에서 빌려온 연출 문법을 씬에 실제로 반영하되, 후반부에는 문제-해결 구도 컷을
+   최소 1개 배치해 설득력을 잡아먹지 않도록 균형을 잡아라.
+6. 제출 전, 사실 기반 원칙과 씬 시간 합계가 정확히 {duration_s:g}초인지 스스로 재검토하라.
 
 조사가 끝났으면 도구 호출을 멈추고 준비되었다고 알려라. 최종 JSON은 뒤이은 요청에서 받는다.
 """
@@ -173,11 +222,20 @@ FINAL_JSON_INSTRUCTION = """\
 """
 
 
-def build_repair_prompt(errors: list[str]) -> str:
+def build_repair_prompt(errors: list[str], previous_output: dict | str | None = None) -> str:
     error_text = "\n".join(f"- {e}" for e in errors)
+    prev_block = ""
+    if previous_output is not None:
+        prev_json = (
+            previous_output
+            if isinstance(previous_output, str)
+            else json.dumps(previous_output, ensure_ascii=False)
+        )
+        prev_block = f"\n\n방금 만든 시나리오(수정 대상):\n{prev_json}\n"
     return (
         "방금 만든 시나리오에 다음 검증 오류가 있다. 각 오류를 정확히 고쳐서 "
         "전체 시나리오를 다시 스키마에 맞게 완전한 형태로 다시 출력하라 "
         "(일부만 수정한 조각이 아니라 완전한 JSON 전체를 다시 출력할 것):\n\n"
         f"{error_text}"
+        f"{prev_block}"
     )

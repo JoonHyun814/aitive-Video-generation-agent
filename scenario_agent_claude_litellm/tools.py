@@ -29,6 +29,19 @@ _MAX_TEXT_CHARS = 6000
 _MAX_IMAGES_LISTED = 15
 _IMAGE_EXT = (".jpg", ".jpeg", ".png", ".webp", ".gif")
 
+# web_fetch's vision path makes its own litellm call, outside agent_loop's
+# normal request/response cycle -- so its cost/usage would otherwise be
+# invisible in the run trace. Tool functions are single-threaded and called
+# synchronously one at a time, so a plain module list is a safe place to
+# stash "a sub-call happened" for agent_loop to drain after each dispatch().
+_SUB_CALLS: list[dict] = []
+
+
+def pop_sub_calls() -> list[dict]:
+    calls = list(_SUB_CALLS)
+    _SUB_CALLS.clear()
+    return calls
+
 
 def _vision_describe(image_bytes: bytes, mime: str) -> str:
     b64 = base64.b64encode(image_bytes).decode()
@@ -55,7 +68,9 @@ def _vision_describe(image_bytes: bytes, mime: str) -> str:
             }
         ],
         timeout=60,
+        num_retries=1,
     )
+    _SUB_CALLS.append({"tool": "web_fetch:vision", "usage": config.usage_dict(resp.usage)})
     return resp.choices[0].message.content or "(이미지 분석 결과 없음)"
 
 
