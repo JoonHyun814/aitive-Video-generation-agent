@@ -33,18 +33,11 @@ class EntityImagePlan(Strict):
     entity_type: EntityType
     entity_id: str
     is_product: bool
-    # English Flux text-to-image prompt -- produces a draft. When is_product
-    # is true this is never sent to Flux (the real product photo collected
-    # from the source URL is used instead) -- still required non-empty so the
-    # model records *why* (e.g. "실제 제품 사진 사용, 생성 생략").
+    # English Flux text-to-image prompt (docs/api/FLUX_PROMPT.md conventions).
+    # When is_product is true this is never sent to Flux (the real product
+    # photo collected from the source URL is used instead) -- still required
+    # non-empty so the model records *why* (e.g. "실제 제품 사진 사용, 생성 생략").
     generation_prompt: str
-    # English Qwen-Edit instruction that refines the Flux draft into the
-    # final entity image (Qwen-Edit always takes an input image -- there is
-    # no text-only entry point -- so the draft is the seed). Should describe
-    # a quality/realism polish (fix anatomy, sharpen detail, correct
-    # lighting/texture) WITHOUT changing subject or composition. Same
-    # "실제 제품 사진 사용, 생성 생략" placeholder rule applies when is_product.
-    refine_prompt: str
     width: int
     height: int
 

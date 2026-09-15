@@ -15,28 +15,34 @@ SYSTEM_PROMPT = """\
 
 생성 파이프라인은 아래 3단계로 고정되어 있고, 각 단계의 제약을 반드시 지켜야 한다.
 
-## 1단계 — 등장 요소별 레퍼런스 이미지 (Flux 초안 -> Qwen-Edit 보정, 2단 파이프라인)
-- 시나리오의 characters/locations/props 각 항목마다 하나씩 레퍼런스 이미지를 만든다.
-  Flux 단독 결과물은 품질이 낮을 수 있어, Flux로 초안을 만든 뒤 Qwen-Edit으로 한 번
-  더 다듬어 최종본으로 쓴다 (Qwen-Edit은 텍스트만으로는 실행할 수 없고 항상 입력
-  이미지가 필요하므로, Flux 초안이 그 입력 이미지 역할을 한다).
-- `generation_prompt`: Flux에게 줄 순수 텍스트 프롬프트 (영어, 초안용). Flux는 참조
-  이미지를 받지 않는다.
-- `refine_prompt`: Qwen-Edit에게 줄 보정 지시문 (영어). Flux 초안을 입력으로 받아
-  "같은 피사체·같은 구도를 유지한 채" 해부학적 오류 수정, 디테일/질감/조명을
-  전문 커머셜 사진 수준으로 끌어올리는 것이 목적이다. 새로운 요소를 추가하거나
-  구도/피사체를 바꾸라고 지시하지 말 것 (그건 이 단계의 역할이 아니다).
-- 여러 요소가 "같은 광고 한 편"처럼 보이도록, generation_prompt와 refine_prompt 모두
-  끝에 공통 스타일 지시문을 붙여 톤을 통일한다 (예: 조명/렌즈/색감 톤을 모든 요소에
-  동일하게 반복).
+## 1단계 — 등장 요소별 레퍼런스 이미지 (Flux, text-to-image)
+- 시나리오의 characters/locations/props 각 항목마다 하나씩, 총 1장의 레퍼런스 이미지를
+  만든다. Flux는 참조 이미지를 받지 않으므로 순수 텍스트 프롬프트(`generation_prompt`)
+  하나만 사용한다.
+- **Flux 프롬프트 작성 규칙 (docs/api/FLUX_PROMPT.md 기준, 반드시 지킬 것)**:
+  - 영어로 작성. Mistral 텍스트 인코더 기반이라 태그 나열이 아니라 문장형 서술이 훨씬
+    잘 먹힌다.
+  - **순서가 가중치다**: 프롬프트 맨 앞에 가장 표현하고 싶은 핵심 피사체를 배치한다.
+    공식: `[핵심 피사체] + [행동/포즈] + [배경 맥락/위치] + [스타일·재질·조명] +
+    [카메라 설정(f값 등)] + [텍스트 묘사(필요시)]`.
+  - 모호한 표현("cool", "awesome") 금지, 구체적 용어만 사용.
+  - Flux는 네거티브 프롬프트가 사실상 무효다 — 없앨 것을 나열하지 말고, 화면에 있어야
+    할 것만 정확히 묘사한다 (예: "no extra fingers" 대신 "hands out of frame"처럼
+    긍정 표현으로 바꿔 쓴다).
+  - 이미지 안에 텍스트/로고를 넣어야 하면 그 글자를 따옴표로 감싸고 폰트/색상까지
+    지정한다 (예: `the logo text 'ACME' in elegant serif typography, color #FF5733`).
+  - 심도/조명 제어에 f값과 조명 키워드를 활용한다 (예: `f/1.8` 얕은 심도 클로즈업,
+    `f/8` 깊은 심도 전경, `soft diffused studio lighting`, `golden hour backlighting`,
+    `dramatic rim lighting` 등).
+  - width/height는 64의 배수, 권장값: `1024x1024`, `1360x768`, `768x1360`,
+    `1024x576`.
+- 여러 요소가 "같은 광고 한 편"처럼 보이도록, 모든 프롬프트 끝에 공통 스타일 지시문을
+  붙여 톤을 통일한다 (예: 조명/렌즈/색감 톤을 모든 요소에 동일하게 반복).
 - props 중 실제로 광고하는 "그 제품 자체"를 나타내는 prop이 정확히 하나 있다면
   `is_product=true`로 표시한다. 이 경우 이미지를 새로 생성하지 않고 제품 상세페이지에서
-  수집한 실제 사진을 그대로 쓰므로, generation_prompt와 refine_prompt 모두 짧게
-  "실제 제품 사진 사용, 생성 생략" 같은 안내문만 넣으면 된다 (그래도 필드는 비워둘 수
-  없다).
+  수집한 실제 사진을 그대로 쓰므로, generation_prompt는 짧게 "실제 제품 사진 사용,
+  생성 생략" 같은 안내문만 넣으면 된다 (그래도 필드는 비워둘 수 없다).
 - is_product는 반드시 0개 또는 1개여야 한다. 2개 이상 표시하지 말 것.
-- width/height는 64의 배수로, 인물/장소는 1024x1024~1360x768 범위, 소품 클로즈업은
-  1024x1024 근처를 권장한다.
 
 ## 2단계 — 컷(장면)별 프레임 합성 (Qwen-Edit, 참조 이미지 기반 편집)
 - **모든 장면**에 대해 하나씩 컷 프레임을 만든다 (최종 영상에 쓰이는지 여부와 무관하게
@@ -45,8 +51,22 @@ SYSTEM_PROMPT = """\
   골라 ref_entity_ids에 넣는다 (Qwen-Edit의 하드 제한). 그 장면의 character_ids /
   location_id / prop_ids 중에서만 고르되, 우선순위는: (1) 그 장면에 제품 prop이
   등장하면 최우선, (2) 장소, (3) 인물, (4) 그 외 소품 순으로 최대 3개까지만 담는다.
-- edit_prompt는 선택한 레퍼런스 이미지들을 어떻게 합성해 이 장면의 action/camera_notes/
-  visual_effects를 반영한 한 장의 프레임으로 만들지 지시한다 (영어 권장).
+- **Qwen-Edit 프롬프트 작성 규칙 (docs/api/QWEN_PROMPT.md 기준)**:
+  - `edit_prompt`(영어 권장)는 태그 나열이 아니라 자연어 지시문으로 쓴다 (Qwen 2.5 VL
+    7B 텍스트 인코더라 문장형 지시를 잘 따른다). "무엇을 어떻게 바꿔서/합성해서 이
+    장면을 만들어라"를 구체적으로 지시한다 (예: 배경 교체, 포즈/동작 지정, 조명 변경,
+    여러 레퍼런스를 하나의 장면으로 합성 등) — 그 장면의 action/camera_notes/
+    visual_effects를 반영한다.
+  - 같은 인물/제품이 여러 컷에서 다른 각도로 나와야 하면, edit_prompt에 카메라 앵글
+    키워드를 넣을 수 있다: 방위각(`front view`, `front-right quarter view`,
+    `right side view` 등 8방향), 고도(`low-angle shot`, `eye-level shot`,
+    `elevated shot`, `high-angle shot`), 거리(`close-up`, `medium shot`,
+    `full body`) — 반드시 이 정확한 표현을 그대로 쓴다 (변형 표현은 각도가
+    불안정해질 수 있음).
+  - `negative_prompt`: 일반적으로 `"blurry, distorted, extra limbs, watermark,
+    low quality"`가 무난하고, 실사(포토리얼) 톤을 원하면
+    `"plastic, smooth skin, airbrushed, 3d render, CGI, cartoon, illustration,
+    perfect symmetry, overexposed"`를 추가한다.
 
 ## 3단계 — 최종 영상 1편 (MiniMax H3, 참조 이미지 + 컷 기반 영상 생성)
 - 전체 광고를 한 번의 MiniMax 호출로 만든다. cut_scene_nos는 **최대 3개**까지만 고를 수

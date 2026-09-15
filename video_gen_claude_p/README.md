@@ -3,19 +3,23 @@
 `scenario_agent_claude(_litellm)`이 만든 `scenario.json`을 입력받아, 실제 이미지/영상
 생성 서비스(ComfyUI)를 호출해 아래 3단계 산출물을 만든다.
 
-1. **등장 요소별 레퍼런스 이미지** — characters/locations/props 각 항목마다 1장.
-   Flux(text-to-image)로 초안을 만든 뒤 Qwen-Edit으로 한 번 더 품질을 보정해 최종본으로
-   쓴다 (Qwen-Edit은 텍스트만으로 실행할 수 없고 항상 입력 이미지가 필요하므로 Flux
-   초안이 그 입력 역할을 한다 — Flux 단독 결과물 품질이 떨어진다는 피드백으로 추가된
-   2단 파이프라인). 초안(`assets/entities_draft/`)과 최종본(`assets/entities/`) 둘 다
-   저장되며, Qwen 보정이 실패하면 초안을 최종본 대신 사용해 파이프라인이 끊기지 않는다.
-   광고하는 제품 자체를 나타내는 prop(`is_product=true`)은 아예 생성하지 않고,
-   scenario.json의 `product.appearance[].source_url`(원래 OCR/외형 분석에 쓰였던
-   실제 제품 사진 URL)에서 다시 다운로드해 그대로 사용한다.
+1. **등장 요소별 레퍼런스 이미지** — characters/locations/props 각 항목마다 Flux
+   (text-to-image) 1회 호출로 1장. 광고하는 제품 자체를 나타내는 prop(`is_product=true`)
+   은 아예 생성하지 않고, scenario.json의 `product.appearance[].source_url`(원래
+   OCR/외형 분석에 쓰였던 실제 제품 사진 URL)에서 다시 다운로드해 그대로 사용한다.
 2. **컷(장면)별 프레임** — 모든 장면 각각에 대해, 그 장면에 등장하는 entity의
    레퍼런스 이미지(최대 3장, Qwen-Edit 하드 제한)를 참조로 삼아 한 장으로 합성.
 3. **최종 영상 1편** — 위 컷 중 최대 3개(MiniMax H3 하드 제한)를 키프레임으로,
    제품 실사진을 reference_image로 삼아 15초 내외 영상 1편을 생성.
+
+Flux(엔티티)와 Qwen-Edit(컷 합성) 프롬프트는 각각 `docs/api/FLUX_PROMPT.md` /
+`docs/api/QWEN_PROMPT.md`의 프롬프팅 가이드(순서/구체성/카메라 앵글 키워드/네거티브
+프롬프트 권장값 등)를 반영해 `prompts.py`의 planning 시스템 프롬프트에 녹여뒀다 —
+claude -p가 GenerationPlan을 쓸 때 이 규칙을 따라 프롬프트를 작성한다.
+
+> 엔티티 이미지에 Flux -> Qwen-Edit 2단 보정을 추가했다가(품질 개선 목적) 되돌렸다:
+> Qwen-Edit 프롬프트 품질을 더 신경 써서 쓰는 쪽으로 대신 대응 — cut 합성은 원래부터
+> Qwen-Edit을 쓰고 있었으므로 그대로 유지.
 
 ## 아키텍처
 
