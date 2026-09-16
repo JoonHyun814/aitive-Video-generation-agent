@@ -1,10 +1,13 @@
 """CLI entrypoint.
 
 python -m video_gen_claude_p.cli --scenario-json <scenario.json 경로> [--plan-only]
+python -m video_gen_claude_p.cli --scenario-json <scenario.json 경로> --from-plan <plan.json 경로>
 
 Pipeline (docs/api/Comfyui_API_SPEC.md 기반):
   1. claude -p 한 번으로 scenario.json -> GenerationPlan(구조화 출력) 생성, 검증 실패 시
      최대 --repair-attempts번 --resume 보수 호출.
+     (--from-plan이 지정되면 이 단계 전체를 건너뛰고 기존 plan.json을 그대로 쓴다 --
+     예: --plan-only로 뽑아둔 계획을 검토/수정한 뒤 이어서 실행하고 싶을 때.)
   2. (--plan-only가 아니면) 결정론적 Python 실행기가 ComfyUI Workflow API를 호출해
      entity 레퍼런스 이미지 -> 컷 프레임 -> 최종 영상을 순서대로 만든다.
 """
@@ -71,6 +74,11 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--max-budget-usd", type=float, default=1.5)
     ap.add_argument("--repair-attempts", type=int, default=2)
     ap.add_argument("--plan-only", action="store_true", help="계획만 생성하고 ComfyUI 실행은 건너뜀")
+    ap.add_argument(
+        "--from-plan",
+        help="이미 생성된 plan.json 경로. 지정하면 claude -p planning 호출(및 repair)을 "
+        "전부 건너뛰고 이 계획을 검증한 뒤 바로 ComfyUI 실행 단계로 진행한다.",
+    )
     ap.add_argument("--flux-timeout-s", type=float, default=600)
     ap.add_argument("--qwen-timeout-s", type=float, default=1200)
     ap.add_argument("--minimax-timeout-s", type=float, default=1800)
@@ -83,49 +91,63 @@ def main(argv: list[str] | None = None) -> int:
     scenario = json.loads(scenario_path.read_text(encoding="utf-8"))
     product_name = scenario.get("product", {}).get("name", scenario_path.stem)
 
-    task_prompt = build_task_prompt(scenario)
-
-    print(f"[1/4] claude -p 로 생성 계획 수립 중 (model={args.model}, budget=${args.max_budget_usd})...")
-    result = planner.run_plan_generation(
-        project_dir=PROJECT_DIR,
-        task_prompt=task_prompt,
-        model=args.model,
-        max_budget_usd=args.max_budget_usd,
-    )
-    if not result.ok:
-        print(f"실패: {result.error_message}", file=sys.stderr)
-        return 1
-
-    plan, validation = _parse_and_validate(result.structured_output, scenario)
     repair_attempts_used = 0
 
-    while (
-        (plan is None or not validation.ok)
-        and repair_attempts_used < args.repair_attempts
-        and result.session_id
-    ):
-        repair_attempts_used += 1
-        print(f"[repair {repair_attempts_used}/{args.repair_attempts}] 검증 실패, 수정 요청 중...")
-        result = planner.run_repair(
+    if args.from_plan:
+        from_plan_path = Path(args.from_plan)
+        if not from_plan_path.is_file():
+            print(f"plan.json을 찾을 수 없습니다: {from_plan_path}", file=sys.stderr)
+            return 1
+        print(f"[1/4] 기존 계획 재사용 (claude -p planning 생략): {from_plan_path}")
+        structured_output = json.loads(from_plan_path.read_text(encoding="utf-8"))
+        plan, validation = _parse_and_validate(structured_output, scenario)
+        cost_usd: float | str | None = "N/A (기존 plan.json 재사용, repair 불가)"
+    else:
+        task_prompt = build_task_prompt(scenario)
+
+        print(f"[1/4] claude -p 로 생성 계획 수립 중 (model={args.model}, budget=${args.max_budget_usd})...")
+        result = planner.run_plan_generation(
             project_dir=PROJECT_DIR,
-            session_id=result.session_id,
-            repair_prompt=build_repair_prompt(validation.errors),
+            task_prompt=task_prompt,
             model=args.model,
             max_budget_usd=args.max_budget_usd,
         )
         if not result.ok:
-            print(f"repair 호출 실패: {result.error_message}", file=sys.stderr)
-            break
+            print(f"실패: {result.error_message}", file=sys.stderr)
+            return 1
+
         plan, validation = _parse_and_validate(result.structured_output, scenario)
+
+        while (
+            (plan is None or not validation.ok)
+            and repair_attempts_used < args.repair_attempts
+            and result.session_id
+        ):
+            repair_attempts_used += 1
+            print(f"[repair {repair_attempts_used}/{args.repair_attempts}] 검증 실패, 수정 요청 중...")
+            result = planner.run_repair(
+                project_dir=PROJECT_DIR,
+                session_id=result.session_id,
+                repair_prompt=build_repair_prompt(validation.errors),
+                model=args.model,
+                max_budget_usd=args.max_budget_usd,
+            )
+            if not result.ok:
+                print(f"repair 호출 실패: {result.error_message}", file=sys.stderr)
+                break
+            plan, validation = _parse_and_validate(result.structured_output, scenario)
+
+        structured_output = result.structured_output
+        cost_usd = result.total_cost_usd
 
     out_dir = Path(args.output_dir) / f"{_slug(product_name)}_{datetime.datetime.now():%Y%m%d_%H%M%S}"
     out_dir.mkdir(parents=True, exist_ok=True)
 
     (out_dir / "plan.json").write_text(
-        json.dumps(result.structured_output, ensure_ascii=False, indent=2), encoding="utf-8"
+        json.dumps(structured_output, ensure_ascii=False, indent=2), encoding="utf-8"
     )
     (out_dir / "plan_validation_report.md").write_text(
-        _format_plan_report(validation, result.total_cost_usd, repair_attempts_used), encoding="utf-8"
+        _format_plan_report(validation, cost_usd, repair_attempts_used), encoding="utf-8"
     )
 
     print(f"\n[2/4] 계획 산출 위치: {out_dir}")

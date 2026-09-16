@@ -47,6 +47,8 @@ manifest.json + report.html
 python -m video_gen_claude_p.cli --scenario-json "output/제이에스티나_.../scenario.json"
 # 계획만 보고 싶을 때 (ComfyUI 호출 생략):
 python -m video_gen_claude_p.cli --scenario-json ... --plan-only
+# 이미 만들어둔 plan.json으로 (claude -p planning 생략하고) 바로 실행:
+python -m video_gen_claude_p.cli --scenario-json ... --from-plan "output/video_gen/.../plan.json"
 ```
 
 출력은 `output/video_gen/<slug>_<timestamp>/`에:
