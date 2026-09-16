@@ -1,11 +1,17 @@
 pydantic>=2.6
 
-# scenario_agent_claude_litellm only (scenario_agent_claude just needs the Claude Code CLI on PATH)
+# scenario_agent_claude_litellm and video_gen_claude_p_v2 (both drive a manual
+# LiteLLM tool-calling loop); scenario_agent_claude itself just needs the
+# Claude Code CLI on PATH. mcp is scenario_agent_claude_litellm-only (RAG).
 litellm>=1.100
 python-dotenv>=1.0
 requests>=2.31
 beautifulsoup4>=4.12
 mcp>=2.0
 
-# video_gen_claude_p only (scenario.json -> ComfyUI generation pipeline)
+# video_gen_claude_p and video_gen_claude_p_v2 (scenario.json -> ComfyUI generation pipeline)
 Pillow>=10.0
+# privacy.py: blurs faces/text in web-sourced reference images before they're
+# used as generation references (see privacy.py's module docstring)
+opencv-python>=4.8
+easyocr>=1.7
